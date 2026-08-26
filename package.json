@@ -1,0 +1,58 @@
+{
+  "name": "dsh-naiwa-skin",
+  "version": "0.1.0",
+  "description": "奶娃皮肤：DeepSeek Harness web 界面的全套可爱化皮肤（奶黄配色 + 奶娃 logo + 奶滴光标）。A cute baby-dragon (Naiwa) skin for the DSH web UI.",
+  "type": "module",
+  "license": "MIT",
+  "author": "Reddddddds",
+  "homepage": "https://github.com/Reddddddds/dsh-naiwa-skin",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Reddddddds/dsh-naiwa-skin.git"
+  },
+  "bugs": {
+    "url": "https://github.com/Reddddddds/dsh-naiwa-skin/issues"
+  },
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "deepseek-harness",
+    "skin",
+    "theme",
+    "naiwa",
+    "奶娃",
+    "cute"
+  ],
+  "main": "lib/index.js",
+  "exports": {
+    ".": {
+      "default": "./lib/index.js"
+    },
+    "./client": {
+      "default": "./lib/client.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib/index.js",
+    "lib/client.js",
+    "lib/assets",
+    "cordis.patch.yml",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-theme"
+      ],
+      "platform": "web"
+    }
+  }
+}

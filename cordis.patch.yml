@@ -1,0 +1,15 @@
+# dsh-naiwa-skin bundle patch
+#
+# Installed through the official CLI —
+#
+#   dsh plugin --profile web add <this-package>
+#
+# — the command reconciles `dsh.profile.bundles` against installed packages
+# and, seeing this `dsh.bundle.patch` declaration, appends `dsh-naiwa-skin`
+# to the bundle stack. The profile boot then merges THIS patch (a single
+# `insert` of the plugin row) into the loader config. The row sits after
+# ui-theme, so the browser half's `inject: ["theme"]` resolves the theme
+# service provided by @deepseek-ai/dsh-client-ui-theme.
+- insert:
+    - id: naiwa-skin
+      name: 'dsh-naiwa-skin'

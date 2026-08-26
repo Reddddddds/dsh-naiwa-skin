@@ -1,0 +1,11 @@
+# deps / build
+node_modules/
+.npm-cache/
+dist/
+*.tgz
+
+# local scratch
+.dsh-vision-toolkit/
+dump.log
+dump.err
+server.log
