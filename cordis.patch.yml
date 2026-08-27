@@ -8,8 +8,11 @@
 # and, seeing this `dsh.bundle.patch` declaration, appends `dsh-naiwa-skin`
 # to the bundle stack. The profile boot then merges THIS patch (a single
 # `insert` of the plugin row) into the loader config. The row sits after
-# ui-theme, so the browser half's `inject: ["theme"]` resolves the theme
-# service provided by @deepseek-ai/dsh-client-ui-theme.
+# ui-theme, so the browser half's `inject: ["theme", "slots", "locale"]`
+# resolves the theme service provided by @deepseek-ai/dsh-client-ui-theme.
+# Removing the bundle removes the plugin entirely: the registered naiwa
+# themes, the settings row and every visual extra go with it, and the
+# default skin is all that remains.
 - insert:
     - id: naiwa-skin
       name: 'dsh-naiwa-skin'

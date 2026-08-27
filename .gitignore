@@ -6,6 +6,7 @@ dist/
 
 # local scratch
 .dsh-vision-toolkit/
+.verify/
 dump.log
 dump.err
 server.log

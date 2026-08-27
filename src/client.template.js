@@ -2,135 +2,219 @@
  * dsh-naiwa-skin — browser half（模板；scripts/build.mjs 把素材 JSON
  * 替换为 data URI 后生成 lib/client.js）。
  *
- * 皮肤机制：
- *  1. ctx.theme.overrideTokens(...) —— 覆盖 --dsw-alias-* 语义 token，
- *     与用户的 light/dark 偏好正交（{ light, dark } 双值，切主题自动跟随）。
- *  2. 注入 <style> —— 鹅黄渐变背景、品牌 logo 替换、奶滴光标、圆角细节。
- *  3. 注入背景水印贴纸（右下思考者 + 左下扎马步，mix-blend 融入背景）。
- *  4. favicon + 页面标题。
+ * v0.2 架构：可插拔的「注册主题」皮肤 —— 不改默认皮肤。
  *
- * 全部自包含：素材以 data URI 内联，无任何 import，零构建依赖。
+ *  1. ctx.theme.register() 把 naiwa-light / naiwa-dark 注册为一等主题
+ *     （基于基础配色的 alias token 覆盖，这是主题系统为第三方皮肤预留
+ *     的正式通道）。内置 light/dark 主题永远保持原样：插件卸载即回到
+ *     默认皮肤，注册主题随插件销毁自动把偏好重置回默认。
+ *  2. 设置 → 通用 → 「奶娃皮肤」开关行（slots 注入，随插件销毁移除）。
+ *     关 = 立即回到默认皮肤；开关状态存 localStorage，默认开。
+ *  3. 开启时，内置 浅色/深色/跟随系统 三个方块继续可用 —— 它们选择
+ *     的是明/暗方案，奶娃皮肤随之包裹（naiwa-light / naiwa-dark）；
+ *     跟随系统时由本插件监听系统配色切换。
+ *  4. 非主题 token 的视觉件（奶黄渐变背景、奶娃光标、logo 替换、
+ *     贴纸水印、favicon）只在奶娃主题处于激活态时挂载，切回内置主题
+ *     或关闭开关时全部卸载 —— 全部通过 ctx.effect 注册，随插件销毁
+ *     一并回收。
+ *
+ * 自包含：素材以 data URI 内联；仅 require 平台静态模块 react。
  */
 window.__ModuleLoader__.load({
 	id: "dsh-naiwa-skin",
 	factory: (require) => {
 		var module = { exports: {} };
 		var exports = module.exports;
+		var React = require("react");
+		var h = React.createElement;
 
-		/** 素材 data URI（build 时由 scripts/encode.mjs 的输出注入）。 */
+		/** 素材 data URI（build 时由 scripts/build.mjs 的输出注入）。 */
 		var ASSETS = __ASSETS_JSON__;
 
+		/** 主题注册 id 与开关持久化键。 */
+		var LIGHT_ID = "naiwa-light";
+		var DARK_ID = "naiwa-dark";
+		var OUR_IDS = { "naiwa-light": true, "naiwa-dark": true };
+		var LS_KEY = "dsh-naiwa-skin:on";
+		var SETTINGS_NS = "settings.naiwa";
+
 		/**
-		 * 主题 alias token 覆盖层。每个键都是 --dsw-alias-* 变量，
-		 * 值为 { light, dark } 双模式色值。
+		 * naiwa-light 主题 token（扁平 值→字符串；主题系统按
+		 * colorScheme=light 基础配色叠加这些 alias 覆盖）。
 		 * V2 主调：奶娃鹅黄 #FFD23F / 按钮亮黄 #FFC42E / 暖棕文字 / 奶黄背景。
 		 */
-		var TOKEN_OVERRIDES = {
+		var LIGHT_TOKENS = {
 			// ── 背景（奶黄系）──────────────────────────────────────
-			"--dsw-alias-bg-base": { light: "#FFF9EC", dark: "#1B1509" },
-			"--dsw-alias-bg-layer-1": { light: "#FFFDF6", dark: "#231B0D" },
-			"--dsw-alias-bg-layer-2": { light: "#FFF5D6", dark: "#2B2110" },
-			"--dsw-alias-bg-layer-3": { light: "#FFEFC2", dark: "#342814" },
-			"--dsw-alias-bg-overlay": { light: "#FFE9B6", dark: "#46361B" },
-			"--dsw-alias-bg-module-platform": { light: "#FFF2D0", dark: "#291F0E" },
-			"--dsw-alias-bg-multi-select": { light: "#FFF3D4", dark: "#2E2412" },
-			"--dsw-alias-bg-skeleton": { light: "rgba(230, 170, 30, 0.10)", dark: "rgba(255, 220, 120, 0.08)" },
-
+			"--dsw-alias-bg-base": "#FFF9EC",
+			"--dsw-alias-bg-layer-1": "#FFFDF6",
+			"--dsw-alias-bg-layer-2": "#FFF5D6",
+			"--dsw-alias-bg-layer-3": "#FFEFC2",
+			"--dsw-alias-bg-overlay": "#FFE9B6",
+			"--dsw-alias-bg-module-platform": "#FFF2D0",
+			"--dsw-alias-bg-multi-select": "#FFF3D4",
+			"--dsw-alias-bg-skeleton": "rgba(230, 170, 30, 0.10)",
 			// ── 边框（黄棕）────────────────────────────────────────
-			"--dsw-alias-border-l1": { light: "rgba(214, 158, 32, 0.12)", dark: "rgba(255, 225, 140, 0.08)" },
-			"--dsw-alias-border-l2": { light: "rgba(214, 158, 32, 0.22)", dark: "rgba(255, 225, 140, 0.14)" },
-			"--dsw-alias-border-l3": { light: "rgba(214, 158, 32, 0.30)", dark: "rgba(255, 225, 140, 0.20)" },
-			"--dsw-alias-border-l4": { light: "rgba(214, 158, 32, 0.38)", dark: "rgba(255, 225, 140, 0.26)" },
-			"--dsw-alias-border-inverted": { light: "rgba(214, 158, 32, 0.12)", dark: "rgba(255, 225, 140, 0.08)" },
-			"--dsw-alias-border-inverted2": { light: "rgba(214, 158, 32, 0.12)", dark: "rgba(255, 225, 140, 0.08)" },
-			"--dsw-alias-border-l2-darkmode-thin": { light: "rgba(214, 158, 32, 0.16)", dark: "rgba(255, 225, 140, 0.08)" },
-
+			"--dsw-alias-border-l1": "rgba(214, 158, 32, 0.12)",
+			"--dsw-alias-border-l2": "rgba(214, 158, 32, 0.22)",
+			"--dsw-alias-border-l3": "rgba(214, 158, 32, 0.30)",
+			"--dsw-alias-border-l4": "rgba(214, 158, 32, 0.38)",
+			"--dsw-alias-border-inverted": "rgba(214, 158, 32, 0.12)",
+			"--dsw-alias-border-inverted2": "rgba(214, 158, 32, 0.12)",
+			"--dsw-alias-border-l2-darkmode-thin": "rgba(214, 158, 32, 0.16)",
 			// ── 品牌（奶娃黄）──────────────────────────────────────
-			"--dsw-alias-brand-primary": { light: "#C77400", dark: "#FFD23F" },
-			"--dsw-alias-brand-primary-invert": { light: "#FFF9EC", dark: "#241A04" },
-			"--dsw-alias-brand-primary-new-colorprimary-new-color": { light: "#E8912D", dark: "#FFC42E" },
-			"--dsw-alias-brand-text": { light: "#8A5A00", dark: "#FFE89A" },
-
+			"--dsw-alias-brand-primary": "#C77400",
+			"--dsw-alias-brand-primary-invert": "#FFF9EC",
+			"--dsw-alias-brand-primary-new-colorprimary-new-color": "#E8912D",
+			"--dsw-alias-brand-text": "#8A5A00",
 			// ── 文字（暖棕）────────────────────────────────────────
-			"--dsw-alias-label-primary": { light: "#402F0A", dark: "#FFF3D0" },
-			"--dsw-alias-label-secondary": { light: "#7C642A", dark: "#D9BC85" },
-			"--dsw-alias-label-tertiary": { light: "#9C8350", dark: "#A98F5C" },
-			"--dsw-alias-label-caption": { light: "#A88F5C", dark: "#977F4E" },
-			"--dsw-alias-label-dimmed": { light: "#D9C393", dark: "#6E5B30" },
-			"--dsw-alias-label-primary-dimmed": { light: "#4A380F", dark: "#F5E3B4" },
-			"--dsw-alias-label-primary-bluish": { light: "#B07200", dark: "#FFD96E" },
-			"--dsw-alias-label-primary-foreground": { light: "#5A3E06", dark: "#4A3408" },
-			"--dsw-alias-label-primary-inverted": { light: "#FFFDF6", dark: "#FFFDF6" },
-
+			"--dsw-alias-label-primary": "#402F0A",
+			"--dsw-alias-label-secondary": "#7C642A",
+			"--dsw-alias-label-tertiary": "#9C8350",
+			"--dsw-alias-label-caption": "#A88F5C",
+			"--dsw-alias-label-dimmed": "#D9C393",
+			"--dsw-alias-label-primary-dimmed": "#4A380F",
+			"--dsw-alias-label-primary-bluish": "#B07200",
+			"--dsw-alias-label-primary-foreground": "#5A3E06",
+			"--dsw-alias-label-primary-inverted": "#FFFDF6",
 			// ── 按钮（鹅黄主按钮 + 深棕文字）──────────────────────
-			"--dsw-alias-button-primary-fill": { light: "#FFC42E", dark: "#FFC42E" },
-			"--dsw-alias-button-primary-hover": { light: "#FFB800", dark: "#FFD23F" },
-			"--dsw-alias-button-primary-dimmed": { light: "#FFF1C2", dark: "#33270F" },
-			"--dsw-alias-button-contrast-fill": { light: "#B07200", dark: "#FFE89A" },
-			"--dsw-alias-button-elevated-fill": { light: "#FFFDF6", dark: "#342814" },
-			"--dsw-alias-button-floating-fill": { light: "#FFFDF6", dark: "#2B2110" },
-			"--dsw-alias-button-floating-hover": { light: "#FFF3D0", dark: "#342814" },
-			"--dsw-alias-button-info-fill": { light: "#D97706", dark: "#E8912D" },
-			"--dsw-alias-button-info-hover": { light: "#C2560B", dark: "#F2A81E" },
-			"--dsw-alias-button-ghost-active-fill": { light: "#FFF2CF", dark: "#382C13" },
-			"--dsw-alias-button-ghost-active-hover": { light: "#FFEBBB", dark: "#423315" },
-			"--dsw-alias-button-ghost-active-border": { light: "#E8B84A", dark: "#977F4E" },
-
+			"--dsw-alias-button-primary-fill": "#FFC42E",
+			"--dsw-alias-button-primary-hover": "#FFB800",
+			"--dsw-alias-button-primary-dimmed": "#FFF1C2",
+			"--dsw-alias-button-contrast-fill": "#B07200",
+			"--dsw-alias-button-elevated-fill": "#FFFDF6",
+			"--dsw-alias-button-floating-fill": "#FFFDF6",
+			"--dsw-alias-button-floating-hover": "#FFF3D0",
+			"--dsw-alias-button-info-fill": "#D97706",
+			"--dsw-alias-button-info-hover": "#C2560B",
+			"--dsw-alias-button-ghost-active-fill": "#FFF2CF",
+			"--dsw-alias-button-ghost-active-hover": "#FFEBBB",
+			"--dsw-alias-button-ghost-active-border": "#E8B84A",
 			// ── 交互态 ─────────────────────────────────────────────
-			"--dsw-alias-interactive-bg-hover": { light: "rgba(230, 170, 30, 0.12)", dark: "rgba(255, 225, 140, 0.09)" },
-			"--dsw-alias-interactive-bg-hover-accent": { light: "rgba(230, 170, 30, 0.18)", dark: "rgba(255, 225, 140, 0.16)" },
-			"--dsw-alias-interactive-bg-active": { light: "rgba(230, 170, 30, 0.18)", dark: "rgba(255, 225, 140, 0.16)" },
-			"--dsw-alias-interactive-bg-hover-solid": { light: "#FFF4D4", dark: "#342814" },
-			"--dsw-alias-interactive-bg-hover-danger": { light: "rgba(224, 69, 42, 0.07)", dark: "rgba(244, 112, 78, 0.16)" },
-
+			"--dsw-alias-interactive-bg-hover": "rgba(230, 170, 30, 0.12)",
+			"--dsw-alias-interactive-bg-hover-accent": "rgba(230, 170, 30, 0.18)",
+			"--dsw-alias-interactive-bg-active": "rgba(230, 170, 30, 0.18)",
+			"--dsw-alias-interactive-bg-hover-solid": "#FFF4D4",
+			"--dsw-alias-interactive-bg-hover-danger": "rgba(224, 69, 42, 0.07)",
 			// ── 代码块 / markdown ──────────────────────────────────
-			"--dsw-alias-markdown-code-block": { light: "#FFF6DC", dark: "#1F180A" },
-			"--dsw-alias-markdown-code-block-banner": { light: "#FFF9E8", dark: "#241C0C" },
-			"--dsw-alias-markdown-inline-code": { light: "#FFEFC0", dark: "#2A200E" },
-			"--dsw-alias-markdown-citation": { light: "#FFF3D0", dark: "#2A200E" },
-			"--dsw-alias-markdown-tag": { light: "#FFF4D4", dark: "#2B2110" },
-			"--dsw-alias-markdown-placeholder": { light: "#FFF3CE", dark: "#261D0C" },
-			"--dsw-alias-markdown-code-segment-selected": { light: "#FFFDF6", dark: "#342814" },
-			"--dsw-alias-markdown-code-segment-unselected": { light: "#FFF3CE", dark: "#1F180A" },
-
+			"--dsw-alias-markdown-code-block": "#FFF6DC",
+			"--dsw-alias-markdown-code-block-banner": "#FFF9E8",
+			"--dsw-alias-markdown-inline-code": "#FFEFC0",
+			"--dsw-alias-markdown-citation": "#FFF3D0",
+			"--dsw-alias-markdown-tag": "#FFF4D4",
+			"--dsw-alias-markdown-placeholder": "#FFF3CE",
+			"--dsw-alias-markdown-code-segment-selected": "#FFFDF6",
+			"--dsw-alias-markdown-code-segment-unselected": "#FFF3CE",
 			// ── 滚动条（奶黄）──────────────────────────────────────
-			"--dsw-alias-scrollbar-bg-l1": { light: "#FFE494", dark: "#4A3A17" },
-			"--dsw-alias-scrollbar-bg-l2": { light: "#FFE494", dark: "#4A3A17" },
-			"--dsw-alias-scrollbar-hover-l1": { light: "#F5C94A", dark: "#5E4A1E" },
-			"--dsw-alias-scrollbar-hover-l2": { light: "#F5C94A", dark: "#5E4A1E" },
-
+			"--dsw-alias-scrollbar-bg-l1": "#FFE494",
+			"--dsw-alias-scrollbar-bg-l2": "#FFE494",
+			"--dsw-alias-scrollbar-hover-l1": "#F5C94A",
+			"--dsw-alias-scrollbar-hover-l2": "#F5C94A",
 			// ── 状态色（暖调，成功用奶娃眼睛绿）────────────────────
-			"--dsw-alias-state-success-primary": { light: "#3E9E55", dark: "#5CBE78" },
-			"--dsw-alias-state-success-secondary": { light: "#5CBE78", dark: "#5CBE78" },
-			"--dsw-alias-state-success-tertiary": { light: "#DFF5E3", dark: "#1A3320" },
-			"--dsw-alias-state-error-primary": { light: "#E0452A", dark: "#F4704E" },
-			"--dsw-alias-state-error-secondary": { light: "#F0664A", dark: "#F4704E" },
-			"--dsw-alias-state-warn-primary": { light: "#F2A81E", dark: "#F2A81E" },
-			"--dsw-alias-state-warn-secondary": { light: "#F5C94A", dark: "#F5C94A" },
-			"--dsw-alias-state-warn-label": { light: "#C77400", dark: "#F5C94A" },
-			"--dsw-alias-state-warn-tertiary": { light: "#FFF0C8", dark: "#3D2E10" },
-			"--dsw-alias-state-business-primary": { light: "#E8912D", dark: "#F2A81E" },
-			"--dsw-alias-state-business-tertiary": { light: "#FFF0C8", dark: "#3D2E10" },
-
+			"--dsw-alias-state-success-primary": "#3E9E55",
+			"--dsw-alias-state-success-secondary": "#5CBE78",
+			"--dsw-alias-state-success-tertiary": "#DFF5E3",
+			"--dsw-alias-state-error-primary": "#E0452A",
+			"--dsw-alias-state-error-secondary": "#F0664A",
+			"--dsw-alias-state-warn-primary": "#F2A81E",
+			"--dsw-alias-state-warn-secondary": "#F5C94A",
+			"--dsw-alias-state-warn-label": "#C77400",
+			"--dsw-alias-state-warn-tertiary": "#FFF0C8",
+			"--dsw-alias-state-business-primary": "#E8912D",
+			"--dsw-alias-state-business-tertiary": "#FFF0C8",
 			// ── 浮层 ───────────────────────────────────────────────
-			"--dsw-alias-toast-bg": { light: "#5A4308", dark: "#46361B" },
-			"--dsw-alias-tooltip-bg": { light: "#5A4308", dark: "#46361B" },
-
+			"--dsw-alias-toast-bg": "#5A4308",
+			"--dsw-alias-tooltip-bg": "#5A4308",
 			// ── 侧边栏（奶黄）──────────────────────────────────────
-			"--dsw-specific-sidebar-fill": { light: "#FFEFC0", dark: "#201807" }
+			"--dsw-specific-sidebar-fill": "#FFEFC0"
+		};
+
+		/** naiwa-dark 主题 token（colorScheme=dark 基础配色上的覆盖）。 */
+		var DARK_TOKENS = {
+			"--dsw-alias-bg-base": "#1B1509",
+			"--dsw-alias-bg-layer-1": "#231B0D",
+			"--dsw-alias-bg-layer-2": "#2B2110",
+			"--dsw-alias-bg-layer-3": "#342814",
+			"--dsw-alias-bg-overlay": "#46361B",
+			"--dsw-alias-bg-module-platform": "#291F0E",
+			"--dsw-alias-bg-multi-select": "#2E2412",
+			"--dsw-alias-bg-skeleton": "rgba(255, 220, 120, 0.08)",
+			"--dsw-alias-border-l1": "rgba(255, 225, 140, 0.08)",
+			"--dsw-alias-border-l2": "rgba(255, 225, 140, 0.14)",
+			"--dsw-alias-border-l3": "rgba(255, 225, 140, 0.20)",
+			"--dsw-alias-border-l4": "rgba(255, 225, 140, 0.26)",
+			"--dsw-alias-border-inverted": "rgba(255, 225, 140, 0.08)",
+			"--dsw-alias-border-inverted2": "rgba(255, 225, 140, 0.08)",
+			"--dsw-alias-border-l2-darkmode-thin": "rgba(255, 225, 140, 0.08)",
+			"--dsw-alias-brand-primary": "#FFD23F",
+			"--dsw-alias-brand-primary-invert": "#241A04",
+			"--dsw-alias-brand-primary-new-colorprimary-new-color": "#FFC42E",
+			"--dsw-alias-brand-text": "#FFE89A",
+			"--dsw-alias-label-primary": "#FFF3D0",
+			"--dsw-alias-label-secondary": "#D9BC85",
+			"--dsw-alias-label-tertiary": "#A98F5C",
+			"--dsw-alias-label-caption": "#977F4E",
+			"--dsw-alias-label-dimmed": "#6E5B30",
+			"--dsw-alias-label-primary-dimmed": "#F5E3B4",
+			"--dsw-alias-label-primary-bluish": "#FFD96E",
+			"--dsw-alias-label-primary-foreground": "#4A3408",
+			"--dsw-alias-label-primary-inverted": "#FFFDF6",
+			"--dsw-alias-button-primary-fill": "#FFC42E",
+			"--dsw-alias-button-primary-hover": "#FFD23F",
+			"--dsw-alias-button-primary-dimmed": "#33270F",
+			"--dsw-alias-button-contrast-fill": "#FFE89A",
+			"--dsw-alias-button-elevated-fill": "#342814",
+			"--dsw-alias-button-floating-fill": "#2B2110",
+			"--dsw-alias-button-floating-hover": "#342814",
+			"--dsw-alias-button-info-fill": "#E8912D",
+			"--dsw-alias-button-info-hover": "#F2A81E",
+			"--dsw-alias-button-ghost-active-fill": "#382C13",
+			"--dsw-alias-button-ghost-active-hover": "#423315",
+			"--dsw-alias-button-ghost-active-border": "#977F4E",
+			"--dsw-alias-interactive-bg-hover": "rgba(255, 225, 140, 0.09)",
+			"--dsw-alias-interactive-bg-hover-accent": "rgba(255, 225, 140, 0.16)",
+			"--dsw-alias-interactive-bg-active": "rgba(255, 225, 140, 0.16)",
+			"--dsw-alias-interactive-bg-hover-solid": "#342814",
+			"--dsw-alias-interactive-bg-hover-danger": "rgba(244, 112, 78, 0.16)",
+			"--dsw-alias-markdown-code-block": "#1F180A",
+			"--dsw-alias-markdown-code-block-banner": "#241C0C",
+			"--dsw-alias-markdown-inline-code": "#2A200E",
+			"--dsw-alias-markdown-citation": "#2A200E",
+			"--dsw-alias-markdown-tag": "#2B2110",
+			"--dsw-alias-markdown-placeholder": "#261D0C",
+			"--dsw-alias-markdown-code-segment-selected": "#342814",
+			"--dsw-alias-markdown-code-segment-unselected": "#1F180A",
+			"--dsw-alias-scrollbar-bg-l1": "#4A3A17",
+			"--dsw-alias-scrollbar-bg-l2": "#4A3A17",
+			"--dsw-alias-scrollbar-hover-l1": "#5E4A1E",
+			"--dsw-alias-scrollbar-hover-l2": "#5E4A1E",
+			"--dsw-alias-state-success-primary": "#5CBE78",
+			"--dsw-alias-state-success-secondary": "#5CBE78",
+			"--dsw-alias-state-success-tertiary": "#1A3320",
+			"--dsw-alias-state-error-primary": "#F4704E",
+			"--dsw-alias-state-error-secondary": "#F4704E",
+			"--dsw-alias-state-warn-primary": "#F2A81E",
+			"--dsw-alias-state-warn-secondary": "#F5C94A",
+			"--dsw-alias-state-warn-label": "#F5C94A",
+			"--dsw-alias-state-warn-tertiary": "#3D2E10",
+			"--dsw-alias-state-business-primary": "#F2A81E",
+			"--dsw-alias-state-business-tertiary": "#3D2E10",
+			"--dsw-alias-toast-bg": "#46361B",
+			"--dsw-alias-tooltip-bg": "#46361B",
+			"--dsw-specific-sidebar-fill": "#201807"
 		};
 
 		/**
-		 * 皮肤 CSS 模板。%%LOGO%% / %%ICON%% / %%CURSOR%% / %%CURSOR_POINTER%%
-		 * 在 apply 时替换为 ASSETS 中的 data URI。
+		 * 皮肤 CSS 模板（仅奶娃主题激活时挂载）。%%LOGO%% / %%ICON%% /
+		 * %%NEWCHAT%% / %%CURSOR%% / %%CURSOR_POINTER%% / %%DIVING%% 在
+		 * 挂载时替换为 ASSETS 中的 data URI。
 		 */
 		var SKIN_CSS = [
-			"/* ===== dsh-naiwa-skin v2 ===== */",
+			"/* ===== dsh-naiwa-skin v2（可插拔注册主题）===== */",
 
 			// 圆体优先的字体栈
 			":root{--dsw-font-family:'YouYuan','Yuanti SC','幼圆','PingFang SC','Hiragino Sans GB','Microsoft YaHei','Segoe UI',Helvetica,Arial,sans-serif}",
 
-			// 聊天区背景：奶黄柔和渐变（!important 压过主题 presenter 的内联值）
+			// 聊天区背景：奶黄柔和渐变（叠加在主题 token 的纯色之上）
 			"body{background:linear-gradient(180deg,#FFF9EC 0%,#FFF3D6 52%,#FFE9B8 100%) fixed !important}",
 			"body[data-ds-dark-theme]{background:linear-gradient(180deg,#1B1509 0%,#231B0D 55%,#2E2412 100%) fixed !important}",
 
@@ -176,85 +260,265 @@ window.__ModuleLoader__.load({
 			'[class$="turnStatus"]::before{content:"";display:inline-block;flex:none;width:28px;height:28px;background:url("%%DIVING%%") center/contain no-repeat}'
 		].join("\n");
 
-		/** 注入 <style>（幂等：同一 data-naiwa 标记只注入一次）。 */
-		function injectStyle() {
-			if (document.querySelector('style[data-naiwa-skin]')) return;
-			var style = document.createElement("style");
-			style.setAttribute("data-naiwa-skin", "1");
-			style.textContent = SKIN_CSS
-				.replaceAll("%%LOGO%%", ASSETS.logo)
-				.replaceAll("%%ICON%%", ASSETS.icon)
-				.replaceAll("%%NEWCHAT%%", ASSETS.newchat)
-				.replaceAll("%%CURSOR%%", ASSETS.cursor)
-				.replaceAll("%%CURSOR_POINTER%%", ASSETS.cursorPointer)
-				.replaceAll("%%DIVING%%", ASSETS.diving);
-			document.head.appendChild(style);
+		/**
+		 * 设置行样式（材质化时注入一次；data-plugin 标记使其被模块系统
+		 * 记账到本插件名下）。颜色全部走 --dsw-alias-* token，自动适配
+		 * 当前明暗主题。
+		 */
+		var ROW_CSS = [
+			".naiwa-skin-row{border-bottom:1px solid var(--dsw-alias-border-l2);display:flex;align-items:center;justify-content:space-between;gap:16px;padding:16px 0;font:inherit}",
+			".naiwa-skin-row-title{color:var(--dsw-alias-label-primary);font-size:14px;line-height:22px}",
+			".naiwa-skin-row-hint{color:var(--dsw-alias-label-tertiary);font-size:12px;line-height:18px;margin-top:2px;max-width:420px}",
+			".naiwa-skin-row-side{display:flex;align-items:center;gap:10px;flex:none}",
+			".naiwa-skin-row-state{color:var(--dsw-alias-label-secondary);font-size:13px}",
+			".naiwa-skin-switch{position:relative;width:40px;height:22px;border-radius:11px;border:1px solid var(--dsw-alias-border-l3);background:var(--dsw-alias-bg-layer-3);cursor:pointer;padding:0;transition:background .15s ease,border-color .15s ease}",
+			".naiwa-skin-switch:hover{border-color:var(--dsw-alias-border-l4)}",
+			".naiwa-skin-switch:focus-visible{outline:2px solid var(--dsw-alias-brand-primary);outline-offset:2px}",
+			".naiwa-skin-switch-thumb{position:absolute;top:2px;left:2px;width:16px;height:16px;border-radius:50%;background:var(--dsw-alias-label-primary-inverted);box-shadow:0 1px 2px rgba(0,0,0,.2);transition:left .15s ease}",
+			".naiwa-skin-switch[aria-checked=\"true\"]{background:var(--dsw-alias-button-primary-fill);border-color:var(--dsw-alias-button-primary-fill)}",
+			".naiwa-skin-switch[aria-checked=\"true\"] .naiwa-skin-switch-thumb{left:20px}"
+		].join("\n");
+
+		/** 材质化时注入设置行样式（幂等；显式打上 data-plugin 标记）。 */
+		var rowStyleEl = null;
+		if (typeof document !== "undefined" && !document.querySelector("style[data-naiwa-row]")) {
+			rowStyleEl = document.createElement("style");
+			rowStyleEl.setAttribute("data-plugin", "dsh-naiwa-skin");
+			rowStyleEl.setAttribute("data-plugin-css", "dsh-naiwa-skin/row.css");
+			rowStyleEl.setAttribute("data-naiwa-row", "1");
+			rowStyleEl.textContent = ROW_CSS;
+			document.head.appendChild(rowStyleEl);
+		} else if (typeof document !== "undefined") {
+			rowStyleEl = document.querySelector("style[data-naiwa-row]");
 		}
 
-		/** 背景水印贴纸：右下思考者 + 左下扎马步。 */
-		function injectStickers() {
-			if (document.querySelector("[data-naiwa-sticker]")) return;
-			var mk = function (uri, cls) {
-				var d = document.createElement("div");
-				d.setAttribute("data-naiwa-sticker", "1");
-				d.className = "naiwa-bg-sticker " + cls;
-				d.style.backgroundImage = "url('" + uri + "')";
-				return d;
-			};
-			var lg = mk(ASSETS.stickerLg, "naiwa-bg-sticker-lg");
-			var sm = mk(ASSETS.stickerSm, "naiwa-bg-sticker-sm");
-			document.body.appendChild(lg);
-			document.body.appendChild(sm);
-		}
+		// ── 视觉件挂载/卸载（只在奶娃主题激活期间存在）────────────────
+		var extras = { style: null, stickers: [], favicon: null };
 
-		/** favicon + 页面标题。 */
-		function injectBrandBits() {
-			if (document.title && document.title.indexOf("奶娃") === -1) {
-				document.title = "奶娃 · " + document.title;
+		function mountExtras() {
+			if (extras.style === null) {
+				var style = document.createElement("style");
+				style.setAttribute("data-naiwa-skin", "1");
+				style.textContent = SKIN_CSS
+					.replaceAll("%%LOGO%%", ASSETS.logo)
+					.replaceAll("%%ICON%%", ASSETS.icon)
+					.replaceAll("%%NEWCHAT%%", ASSETS.newchat)
+					.replaceAll("%%CURSOR%%", ASSETS.cursor)
+					.replaceAll("%%CURSOR_POINTER%%", ASSETS.cursorPointer)
+					.replaceAll("%%DIVING%%", ASSETS.diving);
+				document.head.appendChild(style);
+				extras.style = style;
 			}
-			if (!document.querySelector('link[rel="icon"][data-naiwa-skin]')) {
+			if (extras.stickers.length === 0) {
+				var mk = function (uri, cls) {
+					var d = document.createElement("div");
+					d.setAttribute("data-naiwa-sticker", "1");
+					d.className = "naiwa-bg-sticker " + cls;
+					d.style.backgroundImage = "url('" + uri + "')";
+					return d;
+				};
+				extras.stickers.push(document.body.appendChild(mk(ASSETS.stickerLg, "naiwa-bg-sticker-lg")));
+				extras.stickers.push(document.body.appendChild(mk(ASSETS.stickerSm, "naiwa-bg-sticker-sm")));
+			}
+			if (extras.favicon === null) {
 				var link = document.createElement("link");
 				link.rel = "icon";
 				link.type = "image/svg+xml";
 				link.href = ASSETS.favicon;
 				link.setAttribute("data-naiwa-skin", "1");
 				document.head.appendChild(link);
+				extras.favicon = link;
 			}
 		}
 
-		/** 主题 alias token 层：覆盖层随 active 主题合成，light/dark 均生效。 */
-		function applyThemeLayer(ctx) {
-			if (!ctx.theme || typeof ctx.theme.overrideTokens !== "function") {
-				console.warn("[naiwa-skin] theme service unavailable — alias tokens stay default (CSS extras still apply)");
-				return;
+		function unmountExtras() {
+			if (extras.style !== null) {
+				extras.style.remove();
+				extras.style = null;
 			}
+			for (var i = 0; i < extras.stickers.length; i++) extras.stickers[i].remove();
+			extras.stickers = [];
+			if (extras.favicon !== null) {
+				extras.favicon.remove();
+				extras.favicon = null;
+			}
+		}
+
+		function syncExtras(activeId) {
+			if (OUR_IDS[activeId] === true) mountExtras();
+			else unmountExtras();
+		}
+
+		// ── 设置行组件 ─────────────────────────────────────────────────
+		var zh = {
+			"title": "奶娃皮肤",
+			"hint": "开启后使用奶娃主题（可插拔的独立主题，默认皮肤保持原样）；关闭立即恢复默认皮肤。浅色/深色/跟随系统继续用于选择明暗方案。",
+			"on": "已开启",
+			"off": "已关闭"
+		};
+		var en = {
+			"title": "Naiwa Skin",
+			"hint": "A pluggable standalone theme — the default skin stays untouched. Turn off to switch back to the stock theme instantly. Light/Dark/System keep selecting the color scheme.",
+			"on": "On",
+			"off": "Off"
+		};
+
+		function NaiwaSkinRow(props) {
+			var t = typeof props.t === "function" ? props.t : function (key) { return zh[key] || key; };
+			var useState = React.useState;
+			var _useState = useState(function () {
+				return typeof props.isSkinOn === "function" ? props.isSkinOn() : false;
+			});
+			var on = _useState[0];
+			var setOn = _useState[1];
+			var toggle = function () {
+				if (typeof props.setSkinEnabled === "function") setOn(props.setSkinEnabled(!on));
+			};
+			return h("div", { className: "naiwa-skin-row" },
+				h("div", { className: "naiwa-skin-row-main" },
+					h("div", { className: "naiwa-skin-row-title" }, t("title")),
+					h("div", { className: "naiwa-skin-row-hint" }, t("hint"))),
+				h("div", { className: "naiwa-skin-row-side" },
+					h("span", { className: "naiwa-skin-row-state", "data-naiwa-on": on ? "1" : "0" }, on ? t("on") : t("off")),
+					h("button", {
+						type: "button",
+						role: "switch",
+						"aria-checked": on ? "true" : "false",
+						className: "naiwa-skin-switch",
+						onClick: toggle
+					}, h("span", { className: "naiwa-skin-switch-thumb" }))));
+		}
+
+		// ── 皮肤控制器：注册主题 + 开关 + 方案跟随 ─────────────────────
+		function makeController(ctx) {
+			var skinOn = true;
+			try {
+				skinOn = window.localStorage.getItem(LS_KEY) !== "0";
+			} catch (error) { /* 私密模式等场景保持默认开 */ }
+			var underlying = "system"; // 最近一次内置偏好（light/dark/system）
+			var disposed = false;
+
+			var isOurs = function (id) { return OUR_IDS[id] === true; };
+			var variantFor = function (scheme) { return scheme === "dark" ? DARK_ID : LIGHT_ID; };
+			var rememberUnderlying = function (preference) {
+				if (preference === "light" || preference === "dark" || preference === "system") underlying = preference;
+			};
+			var safeSetTheme = function (id) {
+				try { ctx.theme.setTheme(id); } catch (error) {
+					console.warn("[naiwa-skin] setTheme(" + id + ") failed:", error);
+				}
+			};
+
+			/** 切到当前方案对应的奶娃变体（仅在皮肤开启且当前不是奶娃时）。 */
+			var adopt = function () {
+				if (!skinOn || disposed) return;
+				var snap = ctx.theme.getTheme();
+				if (isOurs(snap.preference)) return;
+				safeSetTheme(variantFor(snap.active.colorScheme));
+			};
+
+			/** theme/change：记录内置偏好；皮肤开启时把内置选择包裹为奶娃变体。 */
+			var onChange = function (snap) {
+				rememberUnderlying(snap.preference);
+				if (!disposed && skinOn && !isOurs(snap.preference)) adopt();
+				syncExtras(ctx.theme.getTheme().active.id);
+			};
+
+			/** 系统明暗翻转：仅在 跟随系统 + 皮肤开启 + 当前奶娃 时切换变体。 */
+			var media = typeof matchMedia !== "undefined" ? matchMedia("(prefers-color-scheme: dark)") : undefined;
+			var onMedia = function () {
+				if (disposed || !skinOn || underlying !== "system" || !media) return;
+				var snap = ctx.theme.getTheme();
+				if (!isOurs(snap.preference)) return;
+				var want = variantFor(media.matches ? "dark" : "light");
+				if (snap.preference !== want) safeSetTheme(want);
+			};
+
 			ctx.effect(function () {
-				return ctx.theme.overrideTokens("dsh-naiwa-skin", TOKEN_OVERRIDES);
-			}, "naiwa-skin: alias token layer");
+				var disposers = [];
+				try {
+					disposers.push(ctx.theme.register({ id: LIGHT_ID, colorScheme: "light", tokens: LIGHT_TOKENS }));
+				} catch (error) {
+					console.warn("[naiwa-skin] register naiwa-light failed (already registered?):", error);
+				}
+				try {
+					disposers.push(ctx.theme.register({ id: DARK_ID, colorScheme: "dark", tokens: DARK_TOKENS }));
+				} catch (error) {
+					console.warn("[naiwa-skin] register naiwa-dark failed (already registered?):", error);
+				}
+				disposers.push(ctx.on("theme/change", onChange));
+				if (media) {
+					media.addEventListener("change", onMedia);
+					disposers.push(function () { media.removeEventListener("change", onMedia); });
+				}
+				rememberUnderlying(ctx.theme.getTheme().preference);
+				if (skinOn) adopt();
+				syncExtras(ctx.theme.getTheme().active.id);
+				return function () {
+					disposed = true;
+					for (var i = disposers.length - 1; i >= 0; i--) {
+						try { disposers[i](); } catch (error) { /* 注销路径尽力而为 */ }
+					}
+					unmountExtras();
+				};
+			}, "naiwa-skin: theme registration + activation");
+
+			return {
+				isSkinOn: function () { return skinOn; },
+				setSkinEnabled: function (value) {
+					skinOn = value === true;
+					try { window.localStorage.setItem(LS_KEY, skinOn ? "1" : "0"); } catch (error) { /* 持久化失败不影响当次生效 */ }
+					if (!disposed) {
+						if (skinOn) adopt();
+						else if (isOurs(ctx.theme.getTheme().preference)) safeSetTheme(underlying);
+						syncExtras(ctx.theme.getTheme().active.id);
+					}
+					return skinOn;
+				}
+			};
 		}
 
 		/**
-		 * 客户端插件主体。
+		 * 客户端插件主体：注册奶娃主题 + 设置行。全部效果经 ctx.effect
+		 * 登记，插件停用/卸载时逐一回收（主题注销会把激活偏好重置回默认）。
 		 * @param {import('@deepseek-ai/cordis').Context} ctx - 客户端 cordis 上下文。
 		 */
 		function apply(ctx) {
-			try {
-				applyThemeLayer(ctx);
-			} catch (error) {
-				console.error("[naiwa-skin] theme layer failed:", error);
+			if (!ctx.theme || typeof ctx.theme.register !== "function") {
+				console.warn("[naiwa-skin] theme service unavailable — plugin stays dormant (default skin untouched)");
+				return;
 			}
-			try {
-				injectStyle();
-				injectStickers();
-				injectBrandBits();
-			} catch (error) {
-				console.error("[naiwa-skin] css/brand injection failed:", error);
+			var controller = makeController(ctx);
+
+			if (ctx.locale && typeof ctx.locale.register === "function") {
+				ctx.effect(function () {
+					return ctx.locale.register(SETTINGS_NS, { zh: zh, en: en });
+				}, "naiwa-skin: settings row dictionaries");
+			}
+
+			if (ctx.slots && typeof ctx.slots.inject === "function") {
+				ctx.effect(function () {
+					return ctx.slots.inject("settings.general.item", function () {
+						return ctx.slots.register({
+							name: "settings.general.item",
+							id: "naiwa-skin",
+							order: 20,
+							locale: SETTINGS_NS,
+							inject: function () {
+								return {
+									isSkinOn: function () { return controller.isSkinOn(); },
+									setSkinEnabled: function (value) { return controller.setSkinEnabled(value); }
+								};
+							}
+						}, NaiwaSkinRow);
+					});
+				}, "naiwa-skin: settings row");
 			}
 		}
 
 		exports.apply = apply;
-		/** 需要 ui-theme 的 theme 服务（inject 解析完成后才调用 apply）。 */
-		exports.inject = ["theme"];
+		/** 需要 theme（注册主题）、slots（设置行）、locale（行文案）。 */
+		exports.inject = ["theme", "slots", "locale"];
 		return module.exports;
 	}
 });
